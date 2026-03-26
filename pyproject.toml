@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "postulator"
+version = "0.1.0"
+dependencies = [
+    "pydantic",
+    "httpx",
+    "python-dotenv",
+    "scraperator",
+]
