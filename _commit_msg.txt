@@ -1,0 +1,8 @@
+feat: add markdown table helper (postulator/table.py)
+
+- Parse markdown tables into TableNode via table() helper
+- Supports bold, italic, underline, and hyperlinks in cells
+- Header row detected automatically from separator line
+- Uses markdown-it-py for robust parsing
+- Added markdown-it-py>=3.0 to dependencies
+- Updated README with table helper docs and usage example

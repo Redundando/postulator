@@ -12,7 +12,7 @@ The primary consumer is other LLMs and automation scripts that need to compose a
 pip install postulator
 ```
 
-Dependencies (installed automatically): `pydantic`, `httpx`, `python-dotenv`, `scraperator`.
+Dependencies (installed automatically): `pydantic`, `httpx`, `python-dotenv`, `scraperator`, `markdown-it-py`.
 
 ## Configuration
 
@@ -131,6 +131,23 @@ The pipeline automatically:
 **TableNode** (`type="table"`)
 - `children: list[TableRowNode]` — each row contains `list[TableCellNode]`
 - `TableCellNode` has `is_header: bool` and `children: list[BlockNode]`
+
+#### Table Helper
+
+Building tables from node constructors is verbose. The `table()` helper parses a markdown table string into a `TableNode`, with full support for **bold**, *italic*, and [links](url):
+
+```python
+from postulator import table
+
+node = table("""
+| Name | Age |
+|------|-----|
+| **Alice** | 30 |
+| [Bob](https://example.com) | *25* |
+""")
+```
+
+The separator row (`|---|---|`) is optional — omit it to create a table without header cells.
 
 ### Inline Nodes
 

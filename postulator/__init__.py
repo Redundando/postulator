@@ -21,8 +21,12 @@ from .nodes import (
     AudiobookListNode,
     AudiobookCarouselNode,
     ContentImageNode,
+    TableNode,
+    TableRowNode,
+    TableCellNode,
     UnknownNode,
 )
+from .table import table
 
 __all__ = [
     "Post", "AuthorRef", "TagRef", "SeoMeta",
@@ -33,5 +37,7 @@ __all__ = [
     "BlockquoteNode", "HrNode",
     "AudiobookAuthor", "AudiobookNarrator", "AudiobookSeries",
     "AudiobookNode", "AudiobookListItem", "AudiobookListNode", "AudiobookCarouselNode",
-    "ContentImageNode", "UnknownNode",
+    "ContentImageNode",
+    "TableNode", "TableRowNode", "TableCellNode",
+    "UnknownNode", "table",
 ]
