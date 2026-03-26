@@ -9,10 +9,10 @@ The primary consumer is other LLMs and automation scripts that need to compose a
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install postulator
 ```
 
-Dependencies: `pydantic`, `httpx`, `python-dotenv`, `scraperator`.
+Dependencies (installed automatically): `pydantic`, `httpx`, `python-dotenv`, `scraperator`.
 
 ## Configuration
 
