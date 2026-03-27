@@ -27,6 +27,7 @@ from .nodes import (
     UnknownNode,
 )
 from .table import table
+from .markdown import from_markdown
 
 __all__ = [
     "Post", "AuthorRef", "TagRef", "SeoMeta",
@@ -39,5 +40,5 @@ __all__ = [
     "AudiobookNode", "AudiobookListItem", "AudiobookListNode", "AudiobookCarouselNode",
     "ContentImageNode",
     "TableNode", "TableRowNode", "TableCellNode",
-    "UnknownNode", "table",
+    "UnknownNode", "table", "from_markdown",
 ]

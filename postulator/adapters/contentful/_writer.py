@@ -122,7 +122,7 @@ def _block_to_cf(node: BlockNode) -> dict:
             "nodeType": nt,
             "data": {},
             "content": [
-                {"nodeType": "list-item", "data": {}, "content": [_paragraph_to_cf(p) for p in item.children]}
+                {"nodeType": "list-item", "data": {}, "content": [_block_to_cf(child) for child in item.children]}
                 for item in node.children
             ],
         }

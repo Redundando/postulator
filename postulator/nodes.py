@@ -57,7 +57,7 @@ class HeadingNode(BaseModel):
 
 class ListItemNode(BaseModel):
     type: Literal["list-item"] = "list-item"
-    children: list[ParagraphNode] = []
+    children: list["BlockNode"] = []
 
 
 class ListNode(BaseModel):
@@ -206,5 +206,6 @@ BlockNode = Annotated[
 
 DocumentNode = list[BlockNode]
 
+ListItemNode.model_rebuild()
 TableCellNode.model_rebuild()
 TableRowNode.model_rebuild()

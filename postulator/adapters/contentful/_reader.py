@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, TYPE_CHECKING
 
+from ...marketplace import locale_to_country_code
 from ...models import Post, Author, AuthorRef, TagRef, AssetRef, SeoMeta
 from ...nodes import (
     BlockNode, DocumentNode, InlineNode,
@@ -107,7 +108,7 @@ def _parse_block(node: dict, raw_entries: dict[str, dict], raw_assets: dict[str,
 
     if nt in ("unordered-list", "ordered-list"):
         items = [
-            ListItemNode(children=[_parse_paragraph(p) for p in item.get("content", []) if p.get("nodeType") == "paragraph"])
+            ListItemNode(children=[_parse_block(child, raw_entries, raw_assets, locale) for child in item.get("content", [])])
             for item in node.get("content", [])
         ]
         return ListNode(ordered=(nt == "ordered-list"), children=items)
@@ -496,7 +497,7 @@ class _ReaderMixin:
         slug: str,
         locale: str,
     ) -> dict[str, Any] | None:
-        country_code = locale.split("-")[-1].upper()
+        country_code = locale_to_country_code(locale)
         for content_type in ("post", "category"):
             items = await self.find_entries(
                 content_type,
