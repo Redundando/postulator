@@ -65,7 +65,143 @@ The pipeline automatically:
 6. Creates the `post` entry with rich-text body referencing all embedded entries
 7. Publishes everything
 
-## Post Model
+## ContentfulClient
+
+Async HTTP client wrapping the Contentful CMA. Must be used as an async context manager.
+
+```python
+from postulator.adapters.contentful import ContentfulClient
+
+async with ContentfulClient(
+    space_id="<space_id>",
+    environment="master",
+    token="<token>",
+    on_progress=lambda e: print(e),
+) as client:
+    ...
+```
+
+### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `space_id` | `str` | — | Contentful space ID |
+| `environment` | `str` | — | Environment name |
+| `token` | `str` | — | CMA access token |
+| `batch_size` | `int` | `200` | Max entries per batch request |
+| `asset_poll_attempts` | `int` | `10` | Polls before asset processing timeout |
+| `asset_poll_interval` | `float` | `1.0` | Seconds between asset processing polls |
+| `on_progress` | `Callable \| None` | `None` | Progress callback (receives `dict` with `event`, `ts`, and extra keys) |
+
+### High-Level Methods
+
+**Posts:**
+- `create_post(post, publish=False) -> Post` — full pipeline: enrich ASINs, upload assets, create all entries, create post. Returns the round-tripped `Post`.
+- `write_post(post, publish=True) -> Post` — same pipeline but updates an existing post (`post.source_id` required).
+- `read_post(entry_id, locale="en-US") -> Post` — reads a post and all its linked entries/assets into a `Post` model.
+
+**Authors:**
+- `create_author(author, publish=False) -> Author` — creates a new author entry.
+- `write_author(author, publish=True) -> Author` — updates an existing author (`author.source_id` required).
+- `read_author(entry_id, locale="en-US") -> Author` — reads an author entry.
+- `list_authors(country_code, locale="en-US") -> list[Author]` — lists all authors for a country code.
+
+**Tags:**
+- `list_tags(country_code, locale="en-US") -> list[TagRef]` — lists all tags for a country code.
+
+**Lookup:**
+- `find_entry_by_slug(slug, locale) -> dict | None` — checks whether a `post` or `category` entry with the given slug and country code already exists. Useful for verifying a slug is available before creating a new post. The `locale` parameter uses the same locale → country code mapping as `Post.locale` (see [Locale & Marketplace Mapping](#locale--marketplace-mapping)). Returns the raw Contentful entry dict if found, `None` otherwise.
+
+```python
+# Check if a post with this slug already exists in the UK space
+existing = await client.find_entry_by_slug(slug="top-books-june-2026", locale="en-GB")
+if existing:
+    print(f"Already exists: {existing['sys']['id']}")
+else:
+    print("Slug is available")
+```
+
+**SEO:**
+- `write_seo(seo, fallback_label) -> str` — creates or updates a `seoSettings` entry. Returns entry ID.
+
+**Assets:**
+- `upload_local_asset(asset: LocalAsset) -> AssetRef` — uploads, processes, publishes a local file. Returns the resulting `AssetRef`.
+
+**Embeds (usually called automatically by the post pipeline):**
+- `write_asin(node: AudiobookNode) -> str` — creates or reuses an `asin` entry. Returns entry ID.
+- `write_asin_list(node: AudiobookListNode, asin_nodes) -> str` — creates or updates an `asinsList` entry.
+- `write_asin_carousel(node: AudiobookCarouselNode, asin_nodes) -> str` — creates or updates an `asinsCarousel` entry.
+
+### Retry Behaviour
+
+All HTTP requests retry up to 3 times on status codes `429`, `500`, `502`, `503`, `504` with exponential backoff (`2^attempt` seconds). Non-retryable errors raise `httpx.HTTPStatusError` immediately.
+
+### Progress Events
+
+The `on_progress` callback receives dicts with an `event` key. Events emitted:
+
+| Event | When | Extra keys |
+|---|---|---|
+| `fetching_entries` | Before batch-fetching linked entries during read | `count` |
+| `fetching_nested` | Before fetching nested linked entries | `count` |
+| `parsing` | Before parsing raw Contentful data into models | — |
+| `resolving_asins` | Before batch-resolving existing ASIN entries | `count` |
+| `enriching_asins` | Before scraping Audible for missing ASINs | `count` |
+| `writing_asin` | Before creating/reusing a single ASIN entry | `asin`, `marketplace` |
+| `asin_publish_conflict` | When a uniqueKey conflict is detected and resolved | `asin`, `entry_id` |
+| `asin_publish_failed` | When publishing an ASIN entry fails | `asin`, `message` |
+| `uploading_asset` | Before uploading a local asset | `title`, `file_name` |
+| `asset_upload_failed` | When asset upload fails | `title`, `message` |
+| `asset_processing_timeout` | When asset processing polling times out | `asset_id` |
+| `writing_post` | Before updating a post entry | `entry_id` |
+| `creating_post` | Before creating a new post entry | `slug`, `locale` |
+| `writing_author` | Before updating an author entry | `entry_id` |
+| `creating_author` | Before creating a new author entry | `slug` |
+| `post_invalid` | When post validation fails | `slug`, `reason` |
+| `list_skipped` | When an AudiobookListNode is skipped (0 ASINs) | `reason` |
+| `carousel_skipped` | When a carousel is skipped (<4 ASINs) | `reason`, `asins` |
+| `request_failed` | When an HTTP request fails (non-retryable or after retries) | `method`, `url`, `status_code` |
+
+## Locale & Marketplace Mapping
+
+`Post.locale` determines the `countryCode` written to Contentful and the Audible marketplace used for ASIN scraping.
+
+| Locale | Country Code | Audible TLD |
+|---|---|---|
+| `de-DE` | `DE` | `audible.de` |
+| `en-GB` | `UK` | `audible.co.uk` |
+| `fr-FR` | `FR` | `audible.fr` |
+| `it-IT` | `IT` | `audible.it` |
+| `en-CA` | `CA_EN` | `audible.ca` |
+| `fr-CA` | `CA_FR` | `audible.ca` |
+| `es-ES` | `ES` | `audible.es` |
+| `en-US` | `US` | `audible.com` |
+| `en-AU` | `AU` | `audible.com.au` |
+
+## Scraperator Adapter
+
+The `postulator.adapters.scraperator` module wraps the `scraperator` library to batch-scrape Audible product pages and populate `AudiobookNode` fields.
+
+`enrich_audiobook_nodes(nodes, on_progress=None)` fills in `title`, `pdp`, `cover_url`, `summary`, `release_date`, `authors`, and `narrators` on each node — only for fields that are `None`/empty (never overwrites manually-set data).
+
+To configure caching:
+
+```python
+from postulator.adapters.scraperator import configure
+
+configure(
+    cache="local",              # "local" or "dynamodb"
+    cache_directory="cache",    # local cache dir
+    cache_table=None,           # DynamoDB table name
+    scrape_cache="none",        # raw scrape cache
+)
+```
+
+---
+
+## Appendix: Models & Types
+
+### Post Model
 
 `Post` — the top-level model representing a blog post.
 
@@ -89,7 +225,7 @@ The pipeline automatically:
 | `show_hero_image` | `bool` | `True` | Show hero image on page |
 | `related_posts` | `list[str]` | `[]` | Contentful entry IDs of related posts |
 
-## Author Model
+### Author Model
 
 `Author` — represents a blog author entry. Used with `create_author` / `write_author`.
 
@@ -105,11 +241,28 @@ The pipeline automatically:
 | `picture` | `AssetRef \| LocalAsset \| None` | `None` | Profile picture |
 | `seo` | `SeoMeta \| None` | `None` | SEO settings for the author page |
 
-## Body Nodes
+### Authors & Tags (References)
+
+`AuthorRef` and `TagRef` are lightweight references used on `Post`. Both require `source_id` to be set to an existing Contentful entry ID for writes.
+
+```python
+from postulator import AuthorRef, TagRef
+
+post.authors = [
+    AuthorRef(slug="fr-author", locale="fr-FR", name="FR Author", source_id="52621970-fr-author"),
+]
+post.tags = [
+    TagRef(slug="fr-tag", locale="fr-FR", name="FR Tag", source_id="2093616522-fr-tag"),
+]
+```
+
+To discover existing author/tag IDs, use `client.list_authors(country_code, locale)` and `client.list_tags(country_code, locale)` (see [High-Level Methods](#high-level-methods)).
+
+### Body Nodes
 
 `DocumentNode` is `list[BlockNode]`. Each `BlockNode` is a discriminated union (on `type`).
 
-### Standard Block Nodes
+#### Standard Block Nodes
 
 **ParagraphNode** (`type="paragraph"`)
 - `children: list[InlineNode]` — list of `TextNode` and/or `HyperlinkNode`
@@ -120,7 +273,7 @@ The pipeline automatically:
 
 **ListNode** (`type="list"`)
 - `ordered: bool` — `False` for bullet list, `True` for numbered
-- `children: list[ListItemNode]` — each `ListItemNode` contains `list[ParagraphNode]`
+- `children: list[ListItemNode]` — each `ListItemNode` contains `list[BlockNode]` (supports nested lists)
 
 **BlockquoteNode** (`type="blockquote"`)
 - `children: list[ParagraphNode]`
@@ -149,7 +302,51 @@ node = table("""
 
 The separator row (`|---|---|`) is optional — omit it to create a table without header cells.
 
-### Inline Nodes
+#### Markdown-to-Nodes Converter
+
+`from_markdown(text: str) -> DocumentNode` parses a markdown string into postulator body nodes, ready to use as `Post.body`.
+
+```python
+from postulator import from_markdown
+
+nodes = from_markdown("## Hello\n\nThis is **bold** and *italic*.\n\n- Item one\n- Item two")
+# Returns: [HeadingNode, ParagraphNode, ListNode]
+```
+
+Supported block mappings:
+
+| Markdown | Node |
+|---|---|
+| Paragraph | `ParagraphNode` |
+| `# Heading` – `###### Heading` | `HeadingNode(level=1..6)` |
+| `- item` / `* item` | `ListNode(ordered=False)` |
+| `1. item` | `ListNode(ordered=True)` |
+| Nested lists | `ListItemNode` with nested `ListNode` children |
+| `> blockquote` | `BlockquoteNode` |
+| `---` / `***` | `HrNode` |
+| Fenced / indented code blocks | `ParagraphNode(children=[TextNode(marks=["code"])])` |
+| Tables | `TableNode` (delegates to the `table()` helper) |
+| HTML blocks | `ParagraphNode(children=[TextNode(value=raw_html)])` |
+
+Supported inline mappings:
+
+| Markdown | Node |
+|---|---|
+| Plain text | `TextNode` |
+| `**bold**` | `TextNode(marks=["bold"])` |
+| `*italic*` | `TextNode(marks=["italic"])` |
+| `` `code` `` | `TextNode(marks=["code"])` |
+| `[text](url)` | `HyperlinkNode` |
+| Nested marks (`**bold *italic***`) | `TextNode(marks=["bold", "italic"])` |
+| Inline HTML | `TextNode(value=raw_html)` |
+
+Edge cases:
+- Empty / whitespace-only input → `[]`
+- Softbreaks and hardbreaks → `TextNode(value="\n")` (newlines preserved)
+- `[**bold link**](url)` → `HyperlinkNode` with `TextNode(marks=["bold"])` child
+- Images (`![alt](url)`) → skipped with a `logger.warning`
+
+#### Inline Nodes
 
 **TextNode** (`type="text"`)
 - `value: str`
@@ -159,7 +356,7 @@ The separator row (`|---|---|`) is optional — omit it to create a table withou
 - `url: str`
 - `children: list[TextNode]`
 
-### Embed Block Nodes
+#### Embed Block Nodes
 
 **AudiobookNode** (`type="audiobook"`)
 
@@ -229,7 +426,7 @@ An inline image embed. Maps to the `contentImage` content type.
 **UnknownNode** (`type="unknown"`)
 - `raw: dict` — raw Contentful JSON for unrecognized content types. Written back as-is.
 
-## Assets
+### Assets
 
 Two asset types:
 
@@ -266,7 +463,7 @@ During `create_post` / `write_post`, any `LocalAsset` on `featured_image`, `seo.
 6. Publishes the asset
 7. Returns an `AssetRef` that replaces the `LocalAsset` in-place
 
-## SEO Settings
+### SEO Settings
 
 `SeoMeta` — maps to the `seoSettings` content type.
 
@@ -289,100 +486,7 @@ During `create_post` / `write_post`, any `LocalAsset` on `featured_image`, `seo.
 
 `write_seo` creates a new `seoSettings` entry if `seo.source_id` is `None`, or updates the existing one. It publishes the entry and sets `seo.source_id` in-place.
 
-## Authors & Tags
-
-**AuthorRef** and **TagRef** are lightweight references used on `Post`. Both require `source_id` to be set to an existing Contentful entry ID for writes.
-
-```python
-from postulator import AuthorRef, TagRef
-
-post.authors = [
-    AuthorRef(slug="fr-author", locale="fr-FR", name="FR Author", source_id="52621970-fr-author"),
-]
-post.tags = [
-    TagRef(slug="fr-tag", locale="fr-FR", name="FR Tag", source_id="2093616522-fr-tag"),
-]
-```
-
-To discover existing author/tag IDs, use:
-- `client.list_authors(country_code="FR")` — returns `list[Author]`
-- `client.list_tags(country_code="FR")` — returns `list[TagRef]`
-
-## Locale & Marketplace Mapping
-
-`Post.locale` determines the `countryCode` written to Contentful and the Audible marketplace used for ASIN scraping.
-
-| Locale | Country Code | Audible TLD |
-|---|---|---|
-| `de-DE` | `DE` | `audible.de` |
-| `en-GB` | `UK` | `audible.co.uk` |
-| `fr-FR` | `FR` | `audible.fr` |
-| `it-IT` | `IT` | `audible.it` |
-| `en-CA` | `CA_EN` | `audible.ca` |
-| `fr-CA` | `CA_FR` | `audible.ca` |
-| `es-ES` | `ES` | `audible.es` |
-| `en-US` | `US` | `audible.com` |
-| `en-AU` | `AU` | `audible.com.au` |
-
-## ContentfulClient
-
-Async HTTP client wrapping the Contentful CMA. Must be used as an async context manager.
-
-```python
-from postulator.adapters.contentful import ContentfulClient
-
-async with ContentfulClient(
-    space_id="<space_id>",
-    environment="master",
-    token="<token>",
-    on_progress=lambda e: print(e),
-) as client:
-    ...
-```
-
-### Constructor Parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `space_id` | `str` | — | Contentful space ID |
-| `environment` | `str` | — | Environment name |
-| `token` | `str` | — | CMA access token |
-| `batch_size` | `int` | `200` | Max entries per batch request |
-| `asset_poll_attempts` | `int` | `10` | Polls before asset processing timeout |
-| `asset_poll_interval` | `float` | `1.0` | Seconds between asset processing polls |
-| `on_progress` | `Callable \| None` | `None` | Progress callback (receives `dict` with `event`, `ts`, and extra keys) |
-
-### High-Level Methods
-
-**Posts:**
-- `create_post(post, publish=False) -> Post` — full pipeline: enrich ASINs, upload assets, create all entries, create post. Returns the round-tripped `Post`.
-- `write_post(post, publish=True) -> Post` — same pipeline but updates an existing post (`post.source_id` required).
-- `read_post(entry_id, locale="en-US") -> Post` — reads a post and all its linked entries/assets into a `Post` model.
-
-**Authors:**
-- `create_author(author, publish=False) -> Author` — creates a new author entry.
-- `write_author(author, publish=True) -> Author` — updates an existing author (`author.source_id` required).
-- `read_author(entry_id, locale="en-US") -> Author` — reads an author entry.
-- `list_authors(country_code, locale="en-US") -> list[Author]` — lists all authors for a country code.
-
-**Tags:**
-- `list_tags(country_code, locale="en-US") -> list[TagRef]` — lists all tags for a country code.
-
-**Lookup:**
-- `find_entry_by_slug(slug, locale) -> dict | None` — finds a `post` or `category` entry by slug and country code.
-
-**SEO:**
-- `write_seo(seo, fallback_label) -> str` — creates or updates a `seoSettings` entry. Returns entry ID.
-
-**Assets:**
-- `upload_local_asset(asset: LocalAsset) -> AssetRef` — uploads, processes, publishes a local file. Returns the resulting `AssetRef`.
-
-**Embeds (usually called automatically by the post pipeline):**
-- `write_asin(node: AudiobookNode) -> str` — creates or reuses an `asin` entry. Returns entry ID.
-- `write_asin_list(node: AudiobookListNode, asin_nodes) -> str` — creates or updates an `asinsList` entry.
-- `write_asin_carousel(node: AudiobookCarouselNode, asin_nodes) -> str` — creates or updates an `asinsCarousel` entry.
-
-### Low-Level Methods
+## Appendix: Low-Level Client Methods
 
 - `get_entry(entry_id) -> dict`
 - `get_entries(entry_ids) -> dict[str, dict]` — batch fetch, auto-paginated
@@ -399,55 +503,6 @@ async with ContentfulClient(
 - `process_asset(asset_id, locale) -> None`
 - `publish_asset(asset_id, version) -> dict`
 - `get_content_type(content_type_id) -> dict`
-
-### Retry Behaviour
-
-All HTTP requests retry up to 3 times on status codes `429`, `500`, `502`, `503`, `504` with exponential backoff (`2^attempt` seconds). Non-retryable errors raise `httpx.HTTPStatusError` immediately.
-
-### Progress Events
-
-The `on_progress` callback receives dicts with an `event` key. Events emitted:
-
-| Event | When | Extra keys |
-|---|---|---|
-| `fetching_entries` | Before batch-fetching linked entries during read | `count` |
-| `fetching_nested` | Before fetching nested linked entries | `count` |
-| `parsing` | Before parsing raw Contentful data into models | — |
-| `resolving_asins` | Before batch-resolving existing ASIN entries | `count` |
-| `enriching_asins` | Before scraping Audible for missing ASINs | `count` |
-| `writing_asin` | Before creating/reusing a single ASIN entry | `asin`, `marketplace` |
-| `asin_publish_conflict` | When a uniqueKey conflict is detected and resolved | `asin`, `entry_id` |
-| `asin_publish_failed` | When publishing an ASIN entry fails | `asin`, `message` |
-| `uploading_asset` | Before uploading a local asset | `title`, `file_name` |
-| `asset_upload_failed` | When asset upload fails | `title`, `message` |
-| `asset_processing_timeout` | When asset processing polling times out | `asset_id` |
-| `writing_post` | Before updating a post entry | `entry_id` |
-| `creating_post` | Before creating a new post entry | `slug`, `locale` |
-| `writing_author` | Before updating an author entry | `entry_id` |
-| `creating_author` | Before creating a new author entry | `slug` |
-| `post_invalid` | When post validation fails | `slug`, `reason` |
-| `list_skipped` | When an AudiobookListNode is skipped (0 ASINs) | `reason` |
-| `carousel_skipped` | When a carousel is skipped (<4 ASINs) | `reason`, `asins` |
-| `request_failed` | When an HTTP request fails (non-retryable or after retries) | `method`, `url`, `status_code` |
-
-## Scraperator Adapter
-
-The `postulator.adapters.scraperator` module wraps the `scraperator` library to batch-scrape Audible product pages and populate `AudiobookNode` fields.
-
-`enrich_audiobook_nodes(nodes, on_progress=None)` fills in `title`, `pdp`, `cover_url`, `summary`, `release_date`, `authors`, and `narrators` on each node — only for fields that are `None`/empty (never overwrites manually-set data).
-
-To configure caching:
-
-```python
-from postulator.adapters.scraperator import configure
-
-configure(
-    cache="local",              # "local" or "dynamodb"
-    cache_directory="cache",    # local cache dir
-    cache_table=None,           # DynamoDB table name
-    scrape_cache="none",        # raw scrape cache
-)
-```
 
 ## Known Quirks
 
