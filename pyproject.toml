@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "postulator"
-version = "0.1.6"
+version = "0.1.7"
 description = "Programmatically create, read, and publish Audible blog posts to Contentful CMA."
 readme = "README.md"
 license = {text = "MIT"}
