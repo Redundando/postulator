@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Annotated, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # --- Asset ---
@@ -180,6 +180,12 @@ class TableCellNode(BaseModel):
     type: Literal["table-cell"] = "table-cell"
     is_header: bool = False
     children: list["BlockNode"] = []
+
+    @model_validator(mode="after")
+    def _ensure_non_empty(self) -> TableCellNode:
+        if not self.children:
+            self.children = [ParagraphNode(children=[TextNode(value="")])]
+        return self
 
 
 class TableRowNode(BaseModel):
