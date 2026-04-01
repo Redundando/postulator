@@ -197,6 +197,51 @@ configure(
 )
 ```
 
+## CLI
+
+Postulator ships with a `postulator` command-line tool for inspecting Contentful spaces and dumping model schemas.
+
+```bash
+postulator <command> [options]
+```
+
+All commands that talk to Contentful accept `--space-id`, `--token`, and `--environment` flags. If omitted, they fall back to `CONTENTFUL_SPACE_ID`, `CONTENTFUL_TOKEN`, and `CONTENTFUL_ENVIRONMENT` environment variables.
+
+### Commands
+
+**`postulator entry <entry_id>`** — Dump a single Contentful entry as JSON.
+
+```bash
+postulator entry 6nY8mRqIVO42icaoSquMYS
+postulator entry 6nY8mRqIVO42icaoSquMYS --space-id abc --token cma-xxx
+```
+
+**`postulator content-type <content_type_id>`** — Dump a content type definition as JSON.
+
+```bash
+postulator content-type post
+```
+
+**`postulator content-types`** — List all content types in the space as JSON.
+
+```bash
+postulator content-types
+```
+
+**`postulator schema`** — Fetch all content types and write one markdown file per type, plus an index. Useful for documenting the Contentful schema.
+
+```bash
+postulator schema                       # writes to docs/schema/
+postulator schema --output my-schema/   # custom output directory
+```
+
+**`postulator models`** — Dump the JSON Schema for every postulator Pydantic model (Post, Author, all body nodes, assets, SEO, etc.). No Contentful credentials required. Designed for LLM consumers that need to understand the full type system.
+
+```bash
+postulator models
+postulator models > models.json
+```
+
 ---
 
 ## Appendix: Models & Types

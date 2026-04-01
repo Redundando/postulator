@@ -37,5 +37,8 @@ Homepage = "https://github.com/Redundando/postulator"
 Repository = "https://github.com/Redundando/postulator"
 Issues = "https://github.com/Redundando/postulator/issues"
 
+[project.scripts]
+postulator = "postulator.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["postulator*"]
