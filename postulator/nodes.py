@@ -141,6 +141,7 @@ class AudiobookListNode(BaseModel):
     asins: list[str] = []
     asin_entry_ids: list[str] = []  # raw Contentful entry IDs, preserves unresolved links
     asin_items: list[AudiobookListItem] = []
+    children: list[AudiobookNode] = []
     title: str | None = None
     label: str | None = None
     body_copy: str | None = None
@@ -156,6 +157,7 @@ class AudiobookCarouselNode(BaseModel):
     source_id: str | None = None
     asins: list[str]
     asin_entry_ids: list[str] = []  # raw Contentful entry IDs, preserves unresolved links
+    children: list[AudiobookNode] = []
     items_per_slide: int | None = None
     title: str | None = None
     subtitle: str | None = None

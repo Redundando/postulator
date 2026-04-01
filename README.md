@@ -431,6 +431,7 @@ A list of audiobooks rendered as a grid. Maps to the `asinsList` content type.
 | `asins` | `list[str]` | `[]` | ASINs to include |
 | `asin_entry_ids` | `list[str]` | `[]` | Preserved Contentful entry IDs (used on read round-trip) |
 | `asin_items` | `list[AudiobookListItem]` | `[]` | Per-item overrides for `descriptions="Custom"` mode |
+| `children` | `list[AudiobookNode]` | `[]` | Fully resolved audiobook nodes for each child ASIN (populated by `read_post`, ignored during write) |
 | `title` | `str \| None` | `None` | Section title |
 | `label` | `str \| None` | `None` | Display label |
 | `body_copy` | `str \| None` | `None` | Intro copy |
@@ -448,6 +449,7 @@ A carousel of audiobooks. Maps to the `asinsCarousel` content type. Requires at 
 |---|---|---|---|
 | `asins` | `list[str]` | — | ASINs to include (minimum 4) |
 | `asin_entry_ids` | `list[str]` | `[]` | Preserved Contentful entry IDs |
+| `children` | `list[AudiobookNode]` | `[]` | Fully resolved audiobook nodes for each child ASIN (populated by `read_post`, ignored during write) |
 | `items_per_slide` | `int \| None` | `None` | Items visible per slide |
 | `title` | `str \| None` | `None` | Carousel title |
 | `subtitle` | `str \| None` | `None` | Subtitle |

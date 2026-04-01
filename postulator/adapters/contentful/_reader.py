@@ -147,34 +147,20 @@ def _parse_embed(entry: dict, raw_entries: dict[str, dict], raw_assets: dict[str
     fields = entry.get("fields", {})
 
     if ct == "asin":
-        cover_url = _field(fields, "cover", locale)
-        raw_authors = _field(fields, "authors", locale) or []
-        raw_narrators = _field(fields, "narrators", locale) or []
-        raw_series = _field(fields, "series", locale) or []
-        return AudiobookNode(
-            source_id=sys.get("id"),
-            asin=_field(fields, "asin", locale) or "",
-            marketplace=_field(fields, "marketplace", locale) or "",
-            title=_field(fields, "title", locale),
-            cover_url=cover_url,
-            summary=_field(fields, "summary", locale),
-            label=_field(fields, "label", locale),
-            pdp=_field(fields, "pdp", locale),
-            release_date=_field(fields, "releaseDate", locale),
-            authors=[AudiobookAuthor(**a) for a in raw_authors if isinstance(a, dict)],
-            narrators=[AudiobookNarrator(**n) for n in raw_narrators if isinstance(n, dict)],
-            series=[AudiobookSeries(**s) for s in raw_series if isinstance(s, dict)],
-        )
+        return _parse_asin_entry(entry, locale)
 
     if ct == "asinsList":
-        asins = _resolve_asins(_field(fields, "asins", locale), raw_entries, locale)
-        asin_entry_ids = _entry_ids_from_links(_field(fields, "asins", locale))
+        asin_links = _field(fields, "asins", locale)
+        asins = _resolve_asins(asin_links, raw_entries, locale)
+        asin_entry_ids = _entry_ids_from_links(asin_links)
         asin_items = _parse_asin_descriptions(_field(fields, "asinDescriptions", locale))
+        children = _resolve_asin_children(asin_links, raw_entries, locale)
         return AudiobookListNode(
             source_id=sys.get("id"),
             asins=asins,
             asin_entry_ids=asin_entry_ids,
             asin_items=asin_items,
+            children=children,
             title=_field(fields, "title", locale),
             label=_field(fields, "label", locale),
             body_copy=_field(fields, "copy", locale),
@@ -186,12 +172,15 @@ def _parse_embed(entry: dict, raw_entries: dict[str, dict], raw_assets: dict[str
         )
 
     if ct == "asinsCarousel":
-        asins = _resolve_asins(_field(fields, "asins", locale), raw_entries, locale)
-        asin_entry_ids = _entry_ids_from_links(_field(fields, "asins", locale))
+        asin_links = _field(fields, "asins", locale)
+        asins = _resolve_asins(asin_links, raw_entries, locale)
+        asin_entry_ids = _entry_ids_from_links(asin_links)
+        children = _resolve_asin_children(asin_links, raw_entries, locale)
         return AudiobookCarouselNode(
             source_id=sys.get("id"),
             asins=asins,
             asin_entry_ids=asin_entry_ids,
+            children=children,
             items_per_slide=_field(fields, "itemsPerSlide", locale),
             title=_field(fields, "title", locale),
             subtitle=_field(fields, "subtitle", locale),
@@ -234,6 +223,28 @@ def _parse_asin_descriptions(raw: list | None) -> list[AudiobookListItem]:
     return items
 
 
+def _parse_asin_entry(entry: dict, locale: str) -> AudiobookNode:
+    sys = entry.get("sys", {})
+    fields = entry.get("fields", {})
+    raw_authors = _field(fields, "authors", locale) or []
+    raw_narrators = _field(fields, "narrators", locale) or []
+    raw_series = _field(fields, "series", locale) or []
+    return AudiobookNode(
+        source_id=sys.get("id"),
+        asin=_field(fields, "asin", locale) or "",
+        marketplace=_field(fields, "marketplace", locale) or "",
+        title=_field(fields, "title", locale),
+        cover_url=_field(fields, "cover", locale),
+        summary=_field(fields, "summary", locale),
+        label=_field(fields, "label", locale),
+        pdp=_field(fields, "pdp", locale),
+        release_date=_field(fields, "releaseDate", locale),
+        authors=[AudiobookAuthor(**a) for a in raw_authors if isinstance(a, dict)],
+        narrators=[AudiobookNarrator(**n) for n in raw_narrators if isinstance(n, dict)],
+        series=[AudiobookSeries(**s) for s in raw_series if isinstance(s, dict)],
+    )
+
+
 def _resolve_asins(links: list | None, raw_entries: dict[str, dict], locale: str) -> list[str]:
     if not links:
         return []
@@ -245,6 +256,17 @@ def _resolve_asins(links: list | None, raw_entries: dict[str, dict], locale: str
             if asin:
                 asins.append(asin)
     return asins
+
+
+def _resolve_asin_children(links: list | None, raw_entries: dict[str, dict], locale: str) -> list[AudiobookNode]:
+    if not links:
+        return []
+    children = []
+    for link in links:
+        eid = link.get("sys", {}).get("id") if isinstance(link, dict) else None
+        if eid and eid in raw_entries:
+            children.append(_parse_asin_entry(raw_entries[eid], locale))
+    return children
 
 
 def _parse_body(richtext: dict, raw_entries: dict[str, dict], raw_assets: dict[str, dict], locale: str) -> DocumentNode:
