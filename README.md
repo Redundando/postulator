@@ -470,6 +470,24 @@ An inline image embed. Maps to the `contentImage` content type.
 | `alignment` | `str \| None` | `None` | Image alignment |
 | `size` | `str \| None` | `None` | Image size |
 
+**EmbeddedAssetNode** (`type="embedded-asset"`)
+
+A direct asset embed in the rich-text body. Unlike `ContentImageNode`, this does not use a wrapper entry — it maps directly to Contentful's `embedded-asset-block` rich-text node type. Simpler but without extra fields like alignment or link.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `image` | `AssetRef \| LocalAsset` | — | The image asset. `LocalAsset` is auto-uploaded during write. |
+
+```python
+from postulator import EmbeddedAssetNode, LocalAsset, AssetRef
+
+# Embed a local file (uploaded automatically during write)
+node = EmbeddedAssetNode(image=LocalAsset(local_path="photo.png", title="My Photo"))
+
+# Embed an existing Contentful asset
+node = EmbeddedAssetNode(image=AssetRef(source_id="6qGUwWp4GiJ5Pqkkmk2nI4"))
+```
+
 **UnknownNode** (`type="unknown"`)
 - `raw: dict` — raw Contentful JSON for unrecognized content types. Written back as-is.
 
@@ -501,7 +519,7 @@ Two asset types:
 | `file_name` | `str \| None` | Override file name (defaults to basename of `local_path`) |
 | `content_type` | `str \| None` | Override MIME type (auto-detected if omitted) |
 
-During `create_post` / `write_post`, any `LocalAsset` on `featured_image`, `seo.og_image`, or `ContentImageNode.image` is automatically uploaded via `upload_local_asset`, which:
+During `create_post` / `write_post`, any `LocalAsset` on `featured_image`, `seo.og_image`, `ContentImageNode.image`, or `EmbeddedAssetNode.image` is automatically uploaded via `upload_local_asset`, which:
 1. Reads the file from disk
 2. Uploads bytes to Contentful's upload endpoint
 3. Creates an asset entry linking to the upload

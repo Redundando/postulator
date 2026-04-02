@@ -12,6 +12,7 @@ from ...nodes import (
     ParagraphNode, HeadingNode, ListNode, ListItemNode, BlockquoteNode, HrNode,
     AudiobookAuthor, AudiobookNarrator, AudiobookSeries,
     AudiobookNode, AudiobookListItem, AudiobookListNode, AudiobookCarouselNode, ContentImageNode,
+    EmbeddedAssetNode,
     TableCellNode, TableRowNode, TableNode,
     UnknownNode,
 )
@@ -136,6 +137,14 @@ def _parse_block(node: dict, raw_entries: dict[str, dict], raw_assets: dict[str,
         entry_id = node.get("data", {}).get("target", {}).get("sys", {}).get("id")
         if entry_id and entry_id in raw_entries:
             return _parse_embed(raw_entries[entry_id], raw_entries, raw_assets, locale)
+        return UnknownNode(raw=node)
+
+    if nt == "embedded-asset-block":
+        asset_id = node.get("data", {}).get("target", {}).get("sys", {}).get("id")
+        if asset_id and asset_id in raw_assets:
+            parsed = _parse_asset(raw_assets[asset_id], locale)
+            if parsed:
+                return EmbeddedAssetNode(image=parsed)
         return UnknownNode(raw=node)
 
     return UnknownNode(raw=node)
@@ -285,11 +294,25 @@ def _embedded_ids_from_richtext(richtext: dict) -> list[str]:
     return ids
 
 
+def _asset_ids_from_richtext(richtext: dict) -> set[str]:
+    ids: set[str] = set()
+    if richtext.get("nodeType") == "embedded-asset-block":
+        aid = richtext.get("data", {}).get("target", {}).get("sys", {}).get("id")
+        if aid:
+            ids.add(aid)
+    for child in richtext.get("content", []):
+        ids.update(_asset_ids_from_richtext(child))
+    return ids
+
+
 def _collect_asset_ids(fields: dict, raw_entries: dict[str, dict], locale: str) -> set[str]:
     asset_ids: set[str] = set()
     image_link = _field(fields, "image", locale)
     if isinstance(image_link, dict) and image_link.get("sys", {}).get("linkType") == "Asset":
         asset_ids.add(image_link["sys"]["id"])
+    richtext = _field(fields, "content", locale)
+    if isinstance(richtext, dict):
+        asset_ids.update(_asset_ids_from_richtext(richtext))
     for entry in raw_entries.values():
         ct = entry.get("sys", {}).get("contentType", {}).get("sys", {}).get("id", "")
         if ct == "contentImage":

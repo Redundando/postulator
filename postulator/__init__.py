@@ -21,6 +21,7 @@ from .nodes import (
     AudiobookListNode,
     AudiobookCarouselNode,
     ContentImageNode,
+    EmbeddedAssetNode,
     TableNode,
     TableRowNode,
     TableCellNode,
@@ -38,7 +39,7 @@ __all__ = [
     "BlockquoteNode", "HrNode",
     "AudiobookAuthor", "AudiobookNarrator", "AudiobookSeries",
     "AudiobookNode", "AudiobookListItem", "AudiobookListNode", "AudiobookCarouselNode",
-    "ContentImageNode",
+    "ContentImageNode", "EmbeddedAssetNode",
     "TableNode", "TableRowNode", "TableCellNode",
     "UnknownNode", "table", "from_markdown",
 ]

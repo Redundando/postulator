@@ -198,6 +198,11 @@ class TableNode(BaseModel):
     children: list[TableRowNode] = []
 
 
+class EmbeddedAssetNode(BaseModel):
+    type: Literal["embedded-asset"] = "embedded-asset"
+    image: AssetRef | LocalAsset
+
+
 class UnknownNode(BaseModel):
     type: Literal["unknown"] = "unknown"
     raw: dict
@@ -208,7 +213,7 @@ class UnknownNode(BaseModel):
 BlockNode = Annotated[
     ParagraphNode | HeadingNode | ListNode | BlockquoteNode | HrNode
     | AudiobookNode | AudiobookListNode | AudiobookCarouselNode
-    | ContentImageNode | TableNode | UnknownNode,
+    | ContentImageNode | EmbeddedAssetNode | TableNode | UnknownNode,
     Field(discriminator="type"),
 ]
 

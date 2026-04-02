@@ -22,7 +22,7 @@ from ...nodes import (
     ParagraphNode, HeadingNode, ListNode, BlockquoteNode, HrNode,
     AudiobookNode, AudiobookListNode, AudiobookCarouselNode,
     AudiobookListItem,
-    ContentImageNode, TableCellNode, TableRowNode, TableNode, UnknownNode,
+    ContentImageNode, EmbeddedAssetNode, TableCellNode, TableRowNode, TableNode, UnknownNode,
     AssetRef, LocalAsset,
 )
 
@@ -156,6 +156,11 @@ def _block_to_cf(node: BlockNode) -> dict:
 
     if isinstance(node, (AudiobookNode, AudiobookListNode, AudiobookCarouselNode, ContentImageNode)):
         return _embed_to_cf(node)
+
+    if isinstance(node, EmbeddedAssetNode):
+        if not isinstance(node.image, AssetRef) or not node.image.source_id:
+            raise ValueError("EmbeddedAssetNode.image must be an AssetRef with source_id for write")
+        return {"nodeType": "embedded-asset-block", "data": {"target": _asset_link(node.image.source_id)}, "content": []}
 
     if isinstance(node, UnknownNode):
         return node.raw
@@ -549,6 +554,8 @@ class _WriterMixin:
             post.seo.og_image = await self.upload_local_asset(post.seo.og_image)
         for node in post.body:
             if isinstance(node, ContentImageNode) and isinstance(node.image, LocalAsset):
+                node.image = await self.upload_local_asset(node.image)
+            elif isinstance(node, EmbeddedAssetNode) and isinstance(node.image, LocalAsset):
                 node.image = await self.upload_local_asset(node.image)
 
         if post.seo:
