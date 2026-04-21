@@ -8,6 +8,8 @@ import os
 import time
 from typing import Any, TYPE_CHECKING
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -383,10 +385,35 @@ class _WriterMixin:
                 return real_id
 
         fields = _audiobook_node_to_fields(node)
+
+        # Clean up stale draft left by a previous failed run
+        try:
+            stale = await self.get_entry(unique_key)
+            if not stale["sys"].get("publishedVersion"):
+                logger.info("Deleting stale draft entry %s", unique_key)
+                self._emit("asin_draft_cleanup", asin=node.asin, entry_id=unique_key)
+                await self.delete_entry(unique_key, stale["sys"]["version"])
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+
         raw = await self.create_entry_with_id(unique_key, "asin", fields)
         entry_id = raw["sys"]["id"]
-        await self.publish_entry(entry_id, raw["sys"]["version"])
-        return entry_id
+        version = raw["sys"]["version"]
+        try:
+            await self.publish_entry(entry_id, version)
+            return entry_id
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 422:
+                raise
+            # Publish blocked by corrupted uniqueness index — delete the
+            # deterministic-ID entry and fall back to a random-ID entry.
+            logger.warning("Publish of %s blocked by index conflict, falling back to random ID", unique_key)
+            await self.delete_entry(entry_id, version)
+            raw = await self.create_entry("asin", fields)
+            entry_id = raw["sys"]["id"]
+            await self.publish_entry(entry_id, raw["sys"]["version"])
+            return entry_id
 
     async def _resolve_asin_entry_ids(self: "ContentfulClient", asin_nodes: list[AudiobookNode]) -> list[str]:
         unique_keys = [f"{n.asin}-{n.marketplace}" for n in asin_nodes]
@@ -410,10 +437,11 @@ class _WriterMixin:
                 else:
                     try:
                         await self.publish_entry(item["sys"]["id"], item["sys"]["version"])
+                        result[i] = item["sys"]["id"]
                     except Exception:
-                        logger.exception("Failed to publish existing asin entry %s", item["sys"]["id"])
-                        raise
-                    result[i] = item["sys"]["id"]
+                        self._emit("asin_draft_cleanup", asin=key, entry_id=item["sys"]["id"])
+                        await self.delete_entry(item["sys"]["id"], item["sys"]["version"])
+                        missing.append((i, node))
             else:
                 missing.append((i, node))
 
@@ -597,18 +625,9 @@ class _WriterMixin:
                     except Exception as e:
                         if not hasattr(e, "response"):
                             raise
-                        conflicts = (
-                            e.response.json()
-                            .get("details", {})
-                            .get("errors", [{}])[0]
-                            .get("conflicting", [])
-                        )
-                        if not conflicts:
-                            raise
-                        real_id = conflicts[0]["sys"]["id"]
-                        self._emit("asin_publish_conflict", asin=key, entry_id=entry_id)
+                        self._emit("asin_draft_cleanup", asin=key, entry_id=entry_id)
                         await self.delete_entry(entry_id, item["sys"]["version"])
-                        entry_id = real_id
+                        continue
                 resolved[key] = entry_id
 
             # --- Phase 3: enrich + write missing ASINs concurrently ---

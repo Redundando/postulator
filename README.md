@@ -149,6 +149,7 @@ The `on_progress` callback receives dicts with an `event` key. Events emitted:
 | `enriching_asins` | Before scraping Audible for missing ASINs | `count` |
 | `writing_asin` | Before creating/reusing a single ASIN entry | `asin`, `marketplace` |
 | `asin_publish_conflict` | When a uniqueKey conflict is detected and resolved | `asin`, `entry_id` |
+| `asin_draft_cleanup` | When a stale unpublished ASIN draft is deleted | `asin`, `entry_id` |
 | `asin_publish_failed` | When publishing an ASIN entry fails | `asin`, `message` |
 | `uploading_asset` | Before uploading a local asset | `title`, `file_name` |
 | `asset_upload_failed` | When asset upload fails | `title`, `message` |
@@ -620,3 +621,18 @@ missing ones. Duplicate `AudiobookNode`s referencing the same ASIN reuse the sam
 When publishing an `asin` entry whose `uniqueKey` conflicts with an already-published entry,
 the writer detects the conflict from the Contentful error response, deletes the duplicate,
 and returns the ID of the existing entry.
+
+### Stale ASIN draft cleanup
+
+If a previous write failed mid-pipeline, it may leave behind unpublished `asin` draft entries
+that block future writes. The writer handles this automatically:
+
+1. During batch resolution, if a found entry is unpublished and fails to publish, it is deleted
+   and treated as missing so it gets re-created fresh.
+2. Before creating an entry with a deterministic ID, the writer checks whether a stale draft
+   with that ID already exists and deletes it first.
+3. If publishing a newly created entry still fails with a 422 uniqueKey conflict (e.g. due to
+   a corrupted Contentful uniqueness index), the writer deletes the deterministic-ID entry and
+   falls back to creating one with a random ID.
+
+All draft cleanups emit the `asin_draft_cleanup` progress event.
