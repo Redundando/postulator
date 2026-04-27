@@ -2,7 +2,7 @@
 Package: python-dotenv
 Version: 1.2.2
 Source: https://pypi.org/project/python-dotenv/
-Fetched: 2026-03-25 08:11:42
+Fetched: 2026-04-27 09:56:58
 ---
 
 # python-dotenv

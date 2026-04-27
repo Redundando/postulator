@@ -4,7 +4,7 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 from .markdown import convert_inline
-from .nodes import (
+from .models.nodes import (
     ParagraphNode,
     TableCellNode,
     TableRowNode,

@@ -3,3 +3,4 @@ httpx
 python-dotenv
 scraperator
 markdown-it-py
+python-docx

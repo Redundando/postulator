@@ -2,7 +2,7 @@
 Package: httpx
 Version: 0.28.1
 Source: https://pypi.org/project/httpx/
-Fetched: 2026-03-25 08:11:42
+Fetched: 2026-04-27 09:56:58
 ---
 
 <p align="center">

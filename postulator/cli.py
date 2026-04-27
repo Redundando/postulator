@@ -137,7 +137,7 @@ def _index_to_md(content_types: list) -> str:
 def _collect_models() -> dict[str, Any]:
     """Return JSON-serialisable schema dict for all public postulator models."""
     from . import models as m
-    from . import nodes as n
+    from .models import nodes as n
 
     model_classes = [
         m.Post, m.AuthorRef, m.TagRef, m.SeoMeta, m.Author,

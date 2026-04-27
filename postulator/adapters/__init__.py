@@ -1,3 +1,3 @@
-from .contentful import ContentfulClient
+from .contentful import ContentfulClient, ContentfulAdapter
 
-__all__ = ["ContentfulClient"]
+__all__ = ["ContentfulClient", "ContentfulAdapter"]

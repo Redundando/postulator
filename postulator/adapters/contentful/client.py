@@ -2,12 +2,10 @@
 
 import asyncio
 import logging
-import time
 import httpx
 from typing import Any, Callable
 
-from ._reader import _ReaderMixin
-from ._writer import _WriterMixin
+from ...events import BaseEvent, RequestFailedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +21,7 @@ def _raise_for_status(resp: httpx.Response) -> None:
         )
 
 
-class ContentfulClient(_ReaderMixin, _WriterMixin):
+class ContentfulClient:
     def __init__(
         self,
         space_id: str,
@@ -43,9 +41,9 @@ class ContentfulClient(_ReaderMixin, _WriterMixin):
         self._on_progress = on_progress
         self._http: httpx.AsyncClient | None = None
 
-    def _emit(self, event: str, **kwargs) -> None:
+    def _emit(self, event: BaseEvent) -> None:
         if self._on_progress:
-            self._on_progress({"event": event, "ts": time.time(), **kwargs})
+            self._on_progress(event)
 
     async def __aenter__(self) -> "ContentfulClient":
         self._http = httpx.AsyncClient(headers={"Authorization": f"Bearer {self._token}"})
@@ -65,13 +63,13 @@ class ContentfulClient(_ReaderMixin, _WriterMixin):
             if resp.status_code not in _RETRYABLE:
                 if not resp.is_success:
                     logger.error("%s %s → %s %s", method.upper(), url, resp.status_code, resp.text)
-                    self._emit("request_failed", method=method.upper(), url=url, status_code=resp.status_code)
+                    self._emit(RequestFailedEvent(method=method.upper(), url=url, status_code=resp.status_code))
                 return resp
             if attempt < 3:
                 logger.warning("%s %s → %s, retrying (attempt %d)", method.upper(), url, resp.status_code, attempt + 1)
                 await asyncio.sleep(2 ** attempt)
         logger.error("%s %s → %s after retries", method.upper(), url, resp.status_code)
-        self._emit("request_failed", method=method.upper(), url=url, status_code=resp.status_code)
+        self._emit(RequestFailedEvent(method=method.upper(), url=url, status_code=resp.status_code))
         return resp
 
     async def get_entry(self, entry_id: str) -> dict[str, Any]:

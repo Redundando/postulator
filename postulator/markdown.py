@@ -4,7 +4,7 @@ import logging
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-from .nodes import (
+from .models.nodes import (
     DocumentNode,
     InlineNode,
     TextNode,

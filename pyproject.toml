@@ -30,6 +30,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "scraperator",
     "markdown-it-py>=3.0",
+    "python-docx>=1.1",
 ]
 
 [project.urls]

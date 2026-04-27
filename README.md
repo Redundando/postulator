@@ -2,9 +2,22 @@
 
 ## Overview
 
-Postulator is a Python library for programmatically creating, reading, and publishing blog posts to Contentful CMA (Content Management API). It provides Pydantic models for posts, rich-text body nodes, audiobook embeds, SEO settings, and authors — plus an async Contentful client that handles ASIN resolution, asset uploads, and entry publishing in a single pipeline.
+Postulator is a Python library for programmatically creating, reading, and publishing blog posts. It provides Pydantic models for posts, rich-text body nodes, audiobook embeds, SEO settings, and authors. Adapters handle reading from and writing to specific backends (Contentful, DOCX). Enrichers fill in missing data (Audible product metadata).
 
-The primary consumer is other LLMs and automation scripts that need to compose and publish Audible blog content to a Contentful space.
+The primary consumer is other LLMs and automation scripts that need to compose and publish Audible blog content.
+
+### Architecture
+
+```
+post = docx_adapter.read("article.docx")          # DOCX → generic model
+await contentful_adapter.write(post, publish=True)  # generic model → Contentful
+```
+
+- **Generic model** is the interchange format. All adapters read into it and write from it.
+- **Adapters** own their orchestration. `ContentfulAdapter` handles ASIN resolution, asset uploads, entry creation. `DocxAdapter` handles placeholder parsing, post-processing, DOCX generation.
+- **Enrichers** are pure data in → data out. They don't know about adapters or models.
+- **`ContentfulClient`** is a pure HTTP layer — no business logic.
+- **Node types are extensible** via a registry. Consumers can add custom node types without modifying core.
 
 ## Installation
 
@@ -12,7 +25,7 @@ The primary consumer is other LLMs and automation scripts that need to compose a
 pip install postulator
 ```
 
-Dependencies (installed automatically): `pydantic`, `httpx`, `python-dotenv`, `scraperator`, `markdown-it-py`.
+Dependencies (installed automatically): `pydantic`, `httpx`, `python-dotenv`, `scraperator`, `markdown-it-py`, `python-docx`.
 
 ## Configuration
 
@@ -26,11 +39,13 @@ Set these environment variables (or use a `.env` file with `python-dotenv`):
 
 ## Quick Start
 
+### Contentful: Create a post
+
 ```python
 import asyncio
 from datetime import datetime, timezone
 from postulator import Post, ParagraphNode, TextNode, HeadingNode, AudiobookNode
-from postulator.adapters.contentful import ContentfulClient
+from postulator.adapters.contentful import ContentfulClient, ContentfulAdapter
 
 post = Post(
     slug="my-first-post",
@@ -50,36 +65,91 @@ async def main():
         environment="master",
         token="<token>",
     ) as client:
-        created = await client.create_post(post, publish=True)
+        adapter = ContentfulAdapter(client)
+        created = await adapter.write(post, publish=True)
         print(created.source_id)
 
 asyncio.run(main())
 ```
 
-The pipeline automatically:
-1. Enriches `AudiobookNode`s by scraping Audible (title, cover, PDP URL, authors, etc.)
-2. Creates/reuses `asin` entries in Contentful
-3. Creates `asinsList` / `asinsCarousel` entries for list/carousel nodes
-4. Uploads any `LocalAsset` images
-5. Creates/updates the `seoSettings` entry if `post.seo` is set
-6. Creates the `post` entry with rich-text body referencing all embedded entries
-7. Publishes everything
-
-## ContentfulClient
-
-Async HTTP client wrapping the Contentful CMA. Must be used as an async context manager.
+### DOCX: Read a Word document and upload to Contentful
 
 ```python
-from postulator.adapters.contentful import ContentfulClient
+from postulator.adapters.docx import DocxAdapter
+from postulator.adapters.contentful import ContentfulClient, ContentfulAdapter
+
+# Read DOCX into a Post
+post = DocxAdapter().read("article.docx")
+
+# Upload to Contentful
+async with ContentfulClient(space_id="<space_id>", environment="master", token="<token>") as client:
+    adapter = ContentfulAdapter(client)
+    created = await adapter.write(post, publish=False)  # draft
+```
+
+### Write pipeline
+
+The `ContentfulAdapter.write()` pipeline automatically:
+1. Resolves author and tag names to Contentful entry IDs
+2. Uploads any `LocalAsset` images (featured image, SEO OG image, body embeds)
+3. Creates/updates the `seoSettings` entry if `post.seo` is set
+4. Enriches `AudiobookNode`s by scraping Audible (title, cover, PDP URL, authors, etc.)
+5. Creates/reuses `asin` entries in Contentful
+6. Creates `asinsList` / `asinsCarousel` entries for list/carousel nodes
+7. Creates the `post` entry with rich-text body referencing all embedded entries
+8. Optionally publishes everything
+
+## ContentfulAdapter
+
+High-level orchestrator for reading and writing posts, authors, and tags to Contentful. Wraps a `ContentfulClient`.
+
+```python
+from postulator.adapters.contentful import ContentfulClient, ContentfulAdapter
 
 async with ContentfulClient(
     space_id="<space_id>",
     environment="master",
     token="<token>",
-    on_progress=lambda e: print(e),
+    on_progress=lambda e: print(type(e).__name__),
 ) as client:
+    adapter = ContentfulAdapter(client)
     ...
 ```
+
+### Posts
+
+- `write(post, publish=False) -> Post` — full create pipeline: resolve authors/tags, upload assets, enrich ASINs, create all entries, create post. Returns the round-tripped `Post`.
+- `update(post, publish=True) -> Post` — same pipeline but updates an existing post (`post.source_id` required).
+- `read(entry_id, locale="en-US") -> Post` — reads a post and all its linked entries/assets into a `Post` model.
+
+### Authors
+
+- `create_author(author, publish=False) -> Author` — creates a new author entry.
+- `update_author(author, publish=True) -> Author` — updates an existing author (`author.source_id` required).
+- `read_author(entry_id, locale="en-US") -> Author` — reads an author entry.
+- `list_authors(country_code, locale="en-US") -> list[Author]` — lists all authors for a country code.
+
+### Tags
+
+- `list_tags(country_code, locale="en-US") -> list[TagRef]` — lists all tags for a country code.
+
+### Lookup
+
+- `find_entry_by_slug(slug, locale) -> dict | None` — checks whether a `post` or `category` entry with the given slug and country code already exists. Returns the raw Contentful entry dict if found, `None` otherwise.
+
+```python
+existing = await adapter.find_entry_by_slug(slug="top-books-june-2026", locale="en-GB")
+if existing:
+    print(f"Already exists: {existing['sys']['id']}")
+```
+
+### Assets
+
+- `upload_asset(asset: LocalAsset) -> AssetRef` — uploads, processes, publishes a local file. Returns the resulting `AssetRef`.
+
+## ContentfulClient
+
+Pure async HTTP client wrapping the Contentful CMA. No business logic — all orchestration lives in `ContentfulAdapter`. Must be used as an async context manager.
 
 ### Constructor Parameters
 
@@ -91,46 +161,25 @@ async with ContentfulClient(
 | `batch_size` | `int` | `200` | Max entries per batch request |
 | `asset_poll_attempts` | `int` | `10` | Polls before asset processing timeout |
 | `asset_poll_interval` | `float` | `1.0` | Seconds between asset processing polls |
-| `on_progress` | `Callable \| None` | `None` | Progress callback (receives `dict` with `event`, `ts`, and extra keys) |
+| `on_progress` | `Callable[[BaseEvent], None] \| None` | `None` | Progress callback (receives typed `BaseEvent` instances) |
 
-### High-Level Methods
+### Low-Level Methods
 
-**Posts:**
-- `create_post(post, publish=False) -> Post` — full pipeline: enrich ASINs, upload assets, create all entries, create post. Returns the round-tripped `Post`.
-- `write_post(post, publish=True) -> Post` — same pipeline but updates an existing post (`post.source_id` required).
-- `read_post(entry_id, locale="en-US") -> Post` — reads a post and all its linked entries/assets into a `Post` model.
-
-**Authors:**
-- `create_author(author, publish=False) -> Author` — creates a new author entry.
-- `write_author(author, publish=True) -> Author` — updates an existing author (`author.source_id` required).
-- `read_author(entry_id, locale="en-US") -> Author` — reads an author entry.
-- `list_authors(country_code, locale="en-US") -> list[Author]` — lists all authors for a country code.
-
-**Tags:**
-- `list_tags(country_code, locale="en-US") -> list[TagRef]` — lists all tags for a country code.
-
-**Lookup:**
-- `find_entry_by_slug(slug, locale) -> dict | None` — checks whether a `post` or `category` entry with the given slug and country code already exists. Useful for verifying a slug is available before creating a new post. The `locale` parameter uses the same locale → country code mapping as `Post.locale` (see [Locale & Marketplace Mapping](#locale--marketplace-mapping)). Returns the raw Contentful entry dict if found, `None` otherwise.
-
-```python
-# Check if a post with this slug already exists in the UK space
-existing = await client.find_entry_by_slug(slug="top-books-june-2026", locale="en-GB")
-if existing:
-    print(f"Already exists: {existing['sys']['id']}")
-else:
-    print("Slug is available")
-```
-
-**SEO:**
-- `write_seo(seo, fallback_label) -> str` — creates or updates a `seoSettings` entry. Returns entry ID.
-
-**Assets:**
-- `upload_local_asset(asset: LocalAsset) -> AssetRef` — uploads, processes, publishes a local file. Returns the resulting `AssetRef`.
-
-**Embeds (usually called automatically by the post pipeline):**
-- `write_asin(node: AudiobookNode) -> str` — creates or reuses an `asin` entry. Returns entry ID.
-- `write_asin_list(node: AudiobookListNode, asin_nodes) -> str` — creates or updates an `asinsList` entry.
-- `write_asin_carousel(node: AudiobookCarouselNode, asin_nodes) -> str` — creates or updates an `asinsCarousel` entry.
+- `get_entry(entry_id) -> dict`
+- `get_entries(entry_ids) -> dict[str, dict]` — batch fetch, auto-paginated
+- `create_entry(content_type, fields) -> dict`
+- `create_entry_with_id(entry_id, content_type, fields) -> dict`
+- `update_entry(entry_id, version, fields) -> dict`
+- `publish_entry(entry_id, version) -> dict`
+- `delete_entry(entry_id, version) -> None`
+- `find_entries(content_type, filters, limit=1) -> list[dict]` — auto-paginated
+- `get_asset(asset_id) -> dict`
+- `get_assets(asset_ids) -> dict[str, dict]` — batch fetch
+- `upload_file(data, content_type) -> str` — returns upload ID
+- `create_asset(fields) -> dict`
+- `process_asset(asset_id, locale) -> None`
+- `publish_asset(asset_id, version) -> dict`
+- `get_content_type(content_type_id) -> dict`
 
 ### Retry Behaviour
 
@@ -138,30 +187,87 @@ All HTTP requests retry up to 3 times on status codes `429`, `500`, `502`, `503`
 
 ### Progress Events
 
-The `on_progress` callback receives dicts with an `event` key. Events emitted:
+The `on_progress` callback receives typed `BaseEvent` subclass instances from `postulator.events`. Use `isinstance` checks or pattern matching to handle specific events.
 
-| Event | When | Extra keys |
+```python
+from postulator.events import BaseEvent, CreatingPostEvent, EnrichingAsinsEvent
+
+def on_progress(event: BaseEvent):
+    if isinstance(event, CreatingPostEvent):
+        print(f"Creating post: {event.slug}")
+    elif isinstance(event, EnrichingAsinsEvent):
+        print(f"Enriching {event.count} ASINs")
+```
+
+**Contentful ASIN events:**
+
+| Event class | When | Fields |
 |---|---|---|
-| `fetching_entries` | Before batch-fetching linked entries during read | `count` |
-| `fetching_nested` | Before fetching nested linked entries | `count` |
-| `parsing` | Before parsing raw Contentful data into models | — |
-| `resolving_asins` | Before batch-resolving existing ASIN entries | `count` |
-| `enriching_asins` | Before scraping Audible for missing ASINs | `count` |
-| `writing_asin` | Before creating/reusing a single ASIN entry | `asin`, `marketplace` |
-| `asin_publish_conflict` | When a uniqueKey conflict is detected and resolved | `asin`, `entry_id` |
-| `asin_draft_cleanup` | When a stale unpublished ASIN draft is deleted | `asin`, `entry_id` |
-| `asin_publish_failed` | When publishing an ASIN entry fails | `asin`, `message` |
-| `uploading_asset` | Before uploading a local asset | `title`, `file_name` |
-| `asset_upload_failed` | When asset upload fails | `title`, `message` |
-| `asset_processing_timeout` | When asset processing polling times out | `asset_id` |
-| `writing_post` | Before updating a post entry | `entry_id` |
-| `creating_post` | Before creating a new post entry | `slug`, `locale` |
-| `writing_author` | Before updating an author entry | `entry_id` |
-| `creating_author` | Before creating a new author entry | `slug` |
-| `post_invalid` | When post validation fails | `slug`, `reason` |
-| `list_skipped` | When an AudiobookListNode is skipped (0 ASINs) | `reason` |
-| `carousel_skipped` | When a carousel is skipped (<4 ASINs) | `reason`, `asins` |
-| `request_failed` | When an HTTP request fails (non-retryable or after retries) | `method`, `url`, `status_code` |
+| `ResolvingAsinsEvent` | Before batch-resolving existing ASIN entries | `count` |
+| `EnrichingAsinsEvent` | Before scraping Audible for missing ASINs | `count` |
+| `WritingAsinEvent` | Before creating/reusing a single ASIN entry | `asin`, `marketplace` |
+| `AsinPublishConflictEvent` | When a uniqueKey conflict is detected and resolved | `asin`, `entry_id` |
+| `AsinDraftCleanupEvent` | When a stale unpublished ASIN draft is deleted | `asin`, `entry_id` |
+| `AsinPublishFailedEvent` | When publishing an ASIN entry fails | `asin`, `message` |
+
+**Contentful asset events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `UploadingAssetEvent` | Before uploading a local asset | `title`, `file_name` |
+| `AssetUploadFailedEvent` | When asset upload fails | `title`, `message` |
+| `AssetProcessingTimeoutEvent` | When asset processing polling times out | `asset_id` |
+
+**Contentful post/author events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `CreatingPostEvent` | Before creating a new post entry | `slug`, `locale` |
+| `WritingPostEvent` | Before updating a post entry | `entry_id` |
+| `PostInvalidEvent` | When post validation fails | `slug`, `reason` |
+| `CreatingAuthorEvent` | Before creating a new author entry | `slug` |
+| `WritingAuthorEvent` | Before updating an author entry | `entry_id` |
+
+**Contentful resolution events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `AuthorResolvedEvent` | When an author name is resolved to an ID | `name`, `source_id` |
+| `AuthorNotFoundEvent` | When an author name cannot be resolved | `name` |
+| `TagResolvedEvent` | When a tag name is resolved to an ID | `name`, `source_id` |
+| `TagNotFoundEvent` | When a tag name cannot be resolved | `name` |
+
+**Contentful read events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `FetchingEntriesEvent` | Before batch-fetching linked entries | `count` |
+| `FetchingNestedEvent` | Before fetching nested linked entries | `count` |
+| `ParsingEvent` | Before parsing raw Contentful data into models | — |
+
+**Contentful embed skip events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `ListSkippedEvent` | When an AudiobookListNode is skipped (0 ASINs) | `reason` |
+| `CarouselSkippedEvent` | When a carousel is skipped (<4 ASINs) | `reason`, `asins` |
+
+**HTTP events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `RequestFailedEvent` | When an HTTP request fails (non-retryable or after retries) | `method`, `url`, `status_code` |
+
+**DOCX events:**
+
+| Event class | When | Fields |
+|---|---|---|
+| `ReadingMetadataEvent` | Before reading DOCX metadata | — |
+| `ReadingBodyEvent` | After parsing body nodes | `paragraph_count` |
+| `ParseWarningEvent` | When a parse fallback is used (e.g. title from filename) | `message` |
+| `WritingMetadataEvent` | Before writing DOCX metadata | — |
+| `WritingBodyEvent` | Before writing body nodes | `node_count` |
+| `WritingFeaturedImageEvent` | Before embedding featured image | `url` |
 
 ## Locale & Marketplace Mapping
 
@@ -179,17 +285,95 @@ The `on_progress` callback receives dicts with an `event` key. Events emitted:
 | `en-US` | `US` | `audible.com` |
 | `en-AU` | `AU` | `audible.com.au` |
 
-## Scraperator Adapter
+## DocxAdapter
 
-The `postulator.adapters.scraperator` module wraps the `scraperator` library to batch-scrape Audible product pages and populate `AudiobookNode` fields.
-
-`enrich_audiobook_nodes(nodes, on_progress=None)` fills in `title`, `pdp`, `cover_url`, `summary`, `release_date`, `authors`, and `narrators` on each node — only for fields that are `None`/empty (never overwrites manually-set data).
-
-To configure caching:
+Reads and writes `Post` models to/from DOCX files. Uses bracket-syntax placeholders for metadata and embeds.
 
 ```python
-from postulator.adapters.scraperator import configure
+from postulator.adapters.docx import DocxAdapter
 
+adapter = DocxAdapter(on_progress=None, image_dir=None)
+```
+
+### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `on_progress` | `Callable[[BaseEvent], None] \| None` | `None` | Progress callback |
+| `image_dir` | `str \| None` | `None` | Directory for extracted images (defaults to temp dir) |
+
+### Methods
+
+- `read(path) -> Post` — read a DOCX file into a `Post` model.
+- `read_bytes(data, filename=None) -> Post` — read DOCX bytes into a `Post` model. `filename` is used as title fallback.
+- `write(post, path)` — write a `Post` to a DOCX file.
+- `write_bytes(post) -> bytes` — write a `Post` to DOCX bytes.
+
+### Placeholder Syntax
+
+Metadata and embeds are represented as bracket-delimited placeholders in the DOCX.
+
+**Single-line:** `[TYPE value]` or `[TYPE: value]`
+
+**Multi-line:**
+```
+[TYPE
+key = value
+key = "quoted value"
+]
+```
+
+The `:` after the keyword is always optional. Keys are case-insensitive with dashes/underscores/spaces normalized. Blank lines inside blocks are ignored.
+
+**Escaping:** `\[` → literal `[`, `\]` → literal `]`, `\"` → literal `"`, `\\` → literal `\`
+
+**Placeholder types:**
+
+| Keyword(s) | Type | Description |
+|---|---|---|
+| `post` | Metadata | Post title, market, slug, date, etc. |
+| `author`, `authors` | Metadata | Author name list |
+| `tag`, `tags` | Metadata | Tag name list |
+| `seo` | Metadata | SEO settings |
+| `featured image`, `hero` | Metadata | Featured image marker |
+| `intro`, `introduction` | Metadata | Introduction text |
+| `asin`, `audiobook` | Body embed | Single audiobook |
+| `list`, `asin-list` | Body embed | Audiobook list |
+| `carousel`, `asin-carousel` | Body embed | Audiobook carousel |
+| `image`, `content-image` | Body embed | Content image |
+| `unknown` | Body embed | Round-trip safety (raw JSON) |
+
+### Post-Processing
+
+After parsing, the adapter applies cross-placeholder defaults in order:
+
+1. **Title** ← POST `title` > filename
+2. **Slug** ← POST `slug` > derived from title
+3. **Date** ← POST `date` > today (UTC)
+4. **Intro** ← `[Intro]` block > POST `intro` key > first body paragraph (removed from body)
+5. **SEO meta-title** ← post title if not set
+6. **SEO meta-description** ← intro if not set
+7. **SEO og-title** ← meta-title if not set
+8. **SEO og-description** ← meta-description if not set
+9. **SEO label** ← `"SEO Settings {meta_title}"` if not set
+10. **Featured image title/alt** ← post title if not set
+11. **LIST label** ← post title if not set
+
+If no `[Post]` block is present, the adapter still assembles a Post using filename as title, today as date, and `US` as default market.
+
+## Audible Enricher
+
+The `postulator.enrichers.audible` module provides pure data-in/data-out functions for scraping Audible product metadata. No dependency on postulator models.
+
+```python
+from postulator.enrichers.audible import enrich, enrich_batch, configure
+```
+
+- `enrich(asin, marketplace, on_progress=None) -> dict` — scrape a single Audible product. Returns dict with keys: `title`, `pdp`, `cover_url`, `summary`, `release_date`, `authors` (list of `{name, pdp}`), `narrators` (list of `{name}`).
+- `enrich_batch(items, on_progress=None) -> list[dict]` — batch-scrape. Each item must have `asin` and `marketplace` keys. Returns list of metadata dicts in same order.
+- `configure(cache, cache_directory, cache_table, scrape_cache, scrape_cache_table, aws_region)` — configure scraperator caching.
+
+```python
 configure(
     cache="local",              # "local" or "dynamodb"
     cache_directory="cache",    # local cache dir
@@ -197,6 +381,8 @@ configure(
     scrape_cache="none",        # raw scrape cache
 )
 ```
+
+The Contentful adapter calls the enricher automatically during the write pipeline for AudiobookNodes with missing metadata. You only need to call it directly for standalone enrichment.
 
 ## CLI
 
@@ -253,7 +439,7 @@ postulator models > models.json
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `source_id` | `str \| None` | `None` | Contentful entry ID. Required for `write_post`, auto-set by `create_post`. |
+| `source_id` | `str \| None` | `None` | Contentful entry ID. Required for `adapter.update()`, auto-set by `adapter.write()`. |
 | `slug` | `str` | — | URL slug |
 | `locale` | `str` | — | BCP-47 locale (e.g. `"fr-FR"`, `"en-GB"`). Controls `countryCode` and Audible marketplace — does **not** affect Contentful field locale (always `en-US`). |
 | `title` | `str` | — | Post title |
@@ -277,7 +463,7 @@ postulator models > models.json
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `source_id` | `str \| None` | `None` | Contentful entry ID. Required for `write_author`. |
+| `source_id` | `str \| None` | `None` | Contentful entry ID. Required for `adapter.update_author()`. |
 | `country_code` | `str \| None` | `None` | e.g. `"FR"`, `"UK"` |
 | `slug` | `str` | — | URL slug |
 | `name` | `str` | — | Display name |
@@ -289,24 +475,43 @@ postulator models > models.json
 
 ### Authors & Tags (References)
 
-`AuthorRef` and `TagRef` are lightweight references used on `Post`. Both require `source_id` to be set to an existing Contentful entry ID for writes.
+`AuthorRef` and `TagRef` are lightweight references used on `Post`. For writes via `ContentfulAdapter`, names are automatically resolved to Contentful entry IDs — you don't need to set `source_id` manually.
 
 ```python
 from postulator import AuthorRef, TagRef
 
 post.authors = [
-    AuthorRef(slug="fr-author", locale="fr-FR", name="FR Author", source_id="52621970-fr-author"),
+    AuthorRef(slug="fr-author", locale="fr-FR", name="FR Author"),
 ]
 post.tags = [
-    TagRef(slug="fr-tag", locale="fr-FR", name="FR Tag", source_id="2093616522-fr-tag"),
+    TagRef(slug="fr-tag", locale="fr-FR", name="FR Tag"),
 ]
 ```
 
-To discover existing author/tag IDs, use `client.list_authors(country_code, locale)` and `client.list_tags(country_code, locale)` (see [High-Level Methods](#high-level-methods)).
+If a name cannot be resolved, the reference is silently skipped (with an `AuthorNotFoundEvent` / `TagNotFoundEvent` emitted). The post is still created without that reference.
+
+To discover existing authors/tags, use `adapter.list_authors(country_code, locale)` and `adapter.list_tags(country_code, locale)`.
 
 ### Body Nodes
 
-`DocumentNode` is `list[BlockNode]`. Each `BlockNode` is a discriminated union (on `type`).
+`DocumentNode` is `list[BlockNode]`. Each `BlockNode` is resolved via a node registry (on the `type` field).
+
+#### Node Registry
+
+Node types are extensible. Built-in types are registered at import time. Consumers can register custom types:
+
+```python
+from postulator import BaseNode, register_node, get_node_class
+from typing import Literal
+
+class PodcastEmbedNode(BaseNode):
+    type: Literal["podcast-embed"] = "podcast-embed"
+    podcast_url: str
+
+register_node("podcast-embed", PodcastEmbedNode)
+```
+
+Unrecognized `type` values fall back to `UnknownNode` during deserialization.
 
 #### Standard Block Nodes
 
@@ -432,7 +637,7 @@ A list of audiobooks rendered as a grid. Maps to the `asinsList` content type.
 | `asins` | `list[str]` | `[]` | ASINs to include |
 | `asin_entry_ids` | `list[str]` | `[]` | Preserved Contentful entry IDs (used on read round-trip) |
 | `asin_items` | `list[AudiobookListItem]` | `[]` | Per-item overrides for `descriptions="Custom"` mode |
-| `children` | `list[AudiobookNode]` | `[]` | Fully resolved audiobook nodes for each child ASIN (populated by `read_post`, ignored during write) |
+| `children` | `list[AudiobookNode]` | `[]` | Fully resolved audiobook nodes for each child ASIN (populated by `adapter.read()`, ignored during write) |
 | `title` | `str \| None` | `None` | Section title |
 | `label` | `str \| None` | `None` | Display label |
 | `body_copy` | `str \| None` | `None` | Intro copy |
@@ -450,7 +655,7 @@ A carousel of audiobooks. Maps to the `asinsCarousel` content type. Requires at 
 |---|---|---|---|
 | `asins` | `list[str]` | — | ASINs to include (minimum 4) |
 | `asin_entry_ids` | `list[str]` | `[]` | Preserved Contentful entry IDs |
-| `children` | `list[AudiobookNode]` | `[]` | Fully resolved audiobook nodes for each child ASIN (populated by `read_post`, ignored during write) |
+| `children` | `list[AudiobookNode]` | `[]` | Fully resolved audiobook nodes for each child ASIN (populated by `adapter.read()`, ignored during write) |
 | `items_per_slide` | `int \| None` | `None` | Items visible per slide |
 | `title` | `str \| None` | `None` | Carousel title |
 | `subtitle` | `str \| None` | `None` | Subtitle |
@@ -520,7 +725,7 @@ Two asset types:
 | `file_name` | `str \| None` | Override file name (defaults to basename of `local_path`) |
 | `content_type` | `str \| None` | Override MIME type (auto-detected if omitted) |
 
-During `create_post` / `write_post`, any `LocalAsset` on `featured_image`, `seo.og_image`, `ContentImageNode.image`, or `EmbeddedAssetNode.image` is automatically uploaded via `upload_local_asset`, which:
+During `adapter.write()` / `adapter.update()`, any `LocalAsset` on `featured_image`, `seo.og_image`, `ContentImageNode.image`, or `EmbeddedAssetNode.image` is automatically uploaded via the asset pipeline, which:
 1. Reads the file from disk
 2. Uploads bytes to Contentful's upload endpoint
 3. Creates an asset entry linking to the upload
@@ -550,25 +755,7 @@ During `create_post` / `write_post`, any `LocalAsset` on `featured_image`, `seo.
 | `similar_content_ids` | `list[str]` | `[]` | Entry IDs for similar content links |
 | `external_links_source_code` | `str \| None` | `None` | Tracking source code for external links |
 
-`write_seo` creates a new `seoSettings` entry if `seo.source_id` is `None`, or updates the existing one. It publishes the entry and sets `seo.source_id` in-place.
-
-## Appendix: Low-Level Client Methods
-
-- `get_entry(entry_id) -> dict`
-- `get_entries(entry_ids) -> dict[str, dict]` — batch fetch, auto-paginated
-- `create_entry(content_type, fields) -> dict`
-- `create_entry_with_id(entry_id, content_type, fields) -> dict`
-- `update_entry(entry_id, version, fields) -> dict`
-- `publish_entry(entry_id, version) -> dict`
-- `delete_entry(entry_id, version) -> None`
-- `find_entries(content_type, filters, limit=1) -> list[dict]` — auto-paginated
-- `get_asset(asset_id) -> dict`
-- `get_assets(asset_ids) -> dict[str, dict]` — batch fetch
-- `upload_file(data, content_type) -> str` — returns upload ID
-- `create_asset(fields) -> dict`
-- `process_asset(asset_id, locale) -> None`
-- `publish_asset(asset_id, version) -> dict`
-- `get_content_type(content_type_id) -> dict`
+The SEO entry is created or updated automatically during `adapter.write()` / `adapter.update()` when `post.seo` is set. It publishes the entry and sets `seo.source_id` in-place.
 
 ## Known Quirks
 
@@ -591,7 +778,7 @@ The `descriptions` field controls which data the frontend uses:
 - `"Custom"` — reads the inline overrides from `asinDescriptions` instead
 
 When writing an `AudiobookListNode` with custom per-item summaries, populate `asin_items` with
-`AudiobookListItem` instances and set `descriptions="Custom"`. `write_asin_list` will resolve the
+`AudiobookListItem` instances and set `descriptions="Custom"`. The write pipeline will resolve the
 underlying `asin` entry IDs automatically and embed them alongside the inline overrides.
 
 ### ASIN deduplication
@@ -611,10 +798,10 @@ missing ones. Duplicate `AudiobookNode`s referencing the same ASIN reuse the sam
 
 ### `source_id` requirements for write
 
-- `write_post` requires `post.source_id` (use `create_post` for new posts)
-- `write_author` requires `author.source_id` (use `create_author` for new authors)
+- `adapter.update()` requires `post.source_id` (use `adapter.write()` for new posts)
+- `adapter.update_author()` requires `author.source_id` (use `adapter.create_author()` for new authors)
 - `ContentImageNode` requires `source_id` for write (must reference an existing `contentImage` entry)
-- `AudiobookListNode` and `AudiobookCarouselNode` get `source_id` auto-set during the post pipeline; when calling `write_asin_list` / `write_asin_carousel` directly, set `source_id` to update or leave `None` to create
+- `AudiobookListNode` and `AudiobookCarouselNode` get `source_id` auto-set during the post pipeline
 
 ### ASIN uniqueKey conflict resolution
 
