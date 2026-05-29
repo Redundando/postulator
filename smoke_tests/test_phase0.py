@@ -97,7 +97,7 @@ def test_table_and_markdown():
 
 
 def test_cli_models():
-    from postulator.cli import _collect_models
+    from postulator.cli._models import _collect_models
     schemas = _collect_models()
     assert len(schemas) >= 20
     print(f"  cli_models OK ({len(schemas)} schemas)")

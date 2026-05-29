@@ -41,5 +41,8 @@ Issues = "https://github.com/Redundando/postulator/issues"
 [project.scripts]
 postulator = "postulator.cli:main"
 
+[project.entry-points."postulator.backends"]
+contentful = "postulator.cli.contentful"
+
 [tool.setuptools.packages.find]
 include = ["postulator*"]

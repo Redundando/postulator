@@ -386,48 +386,59 @@ The Contentful adapter calls the enricher automatically during the write pipelin
 
 ## CLI
 
-Postulator ships with a `postulator` command-line tool for inspecting Contentful spaces and dumping model schemas.
+Postulator ships with a `postulator` command-line tool for managing content across CMS backends. Commands are namespaced by backend (currently `contentful`, extensible to others in the future).
 
 ```bash
-postulator <command> [options]
+postulator <backend> <command> [options]
 ```
 
-All commands that talk to Contentful accept `--space-id`, `--token`, and `--environment` flags. If omitted, they fall back to `CONTENTFUL_SPACE_ID`, `CONTENTFUL_TOKEN`, and `CONTENTFUL_ENVIRONMENT` environment variables.
+### Authentication
 
-### Commands
+All Contentful commands accept `--space-id`, `--token`, and `--environment` flags. If omitted, they fall back to environment variables: `CONTENTFUL_SPACE_ID`, `CONTENTFUL_TOKEN`, `CONTENTFUL_ENVIRONMENT`. Flags always take precedence.
 
-**`postulator entry <entry_id>`** — Dump a single Contentful entry as JSON.
+### Output
+
+All commands print to stdout by default. Use `-o <path>` to write to a specific file, or `--output-dir <dir>` to auto-generate a dated filename in a directory.
+
+### Command Overview
+
+| Command | Description |
+|---|---|
+| `postulator contentful list-posts` | List posts (filterable by locale, author, tag, slug pattern) |
+| `postulator contentful read-post <id>` | Read a full post as markdown or JSON |
+| `postulator contentful find <slug>` | Find a post or category by slug |
+| `postulator contentful list-authors` | List authors for a locale |
+| `postulator contentful read-author <id>` | Read a full author |
+| `postulator contentful list-tags` | List tags for a locale |
+| `postulator contentful entry <id>` | Dump a raw Contentful entry as JSON |
+| `postulator contentful content-type <id>` | Dump a content type definition |
+| `postulator contentful content-types` | List all content types |
+| `postulator contentful schema` | Generate markdown docs for all content types |
+| `postulator models` | Dump all Pydantic model schemas as JSON |
+
+### Quick Examples
 
 ```bash
-postulator entry 6nY8mRqIVO42icaoSquMYS
-postulator entry 6nY8mRqIVO42icaoSquMYS --space-id abc --token cma-xxx
+# List the 5 latest Italian posts
+postulator contentful list-posts --locale it-IT --limit 5
+
+# Read a post as markdown
+postulator contentful read-post 6tYgaQ5P2NxTes7YHGsOXE --locale it-IT
+
+# List posts by a specific author
+postulator contentful list-posts --locale fr-FR --author laura-tufari
+
+# Find posts matching a slug pattern
+postulator contentful list-posts --locale de-DE --slug "genre-" --limit 50
+
+# Save output to a file
+postulator contentful list-posts --locale de-DE --format json -o german-posts.json
+
+# Auto-generate filename in a directory
+postulator contentful list-tags --locale en-GB --output-dir ./exports/
 ```
 
-**`postulator content-type <content_type_id>`** — Dump a content type definition as JSON.
-
-```bash
-postulator content-type post
-```
-
-**`postulator content-types`** — List all content types in the space as JSON.
-
-```bash
-postulator content-types
-```
-
-**`postulator schema`** — Fetch all content types and write one markdown file per type, plus an index. Useful for documenting the Contentful schema.
-
-```bash
-postulator schema                       # writes to docs/schema/
-postulator schema --output my-schema/   # custom output directory
-```
-
-**`postulator models`** — Dump the JSON Schema for every postulator Pydantic model (Post, Author, all body nodes, assets, SEO, etc.). No Contentful credentials required. Designed for LLM consumers that need to understand the full type system.
-
-```bash
-postulator models
-postulator models > models.json
-```
+For the full CLI reference with all flags and detailed usage, see [`docs/CLI.md`](docs/CLI.md).
 
 ---
 
