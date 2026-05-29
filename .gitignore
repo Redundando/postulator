@@ -13,6 +13,9 @@ venv/
 # Environment variables
 .env
 
+# tmp
+tmp/
+
 # Scraperator caches
 cache/
 data/
