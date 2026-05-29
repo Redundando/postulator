@@ -67,3 +67,4 @@ class Post(BaseModel):
     show_publish_date: bool = True
     show_hero_image: bool = True
     related_posts: list[str] = []
+    unique_key: str | None = None

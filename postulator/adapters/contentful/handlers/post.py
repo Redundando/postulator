@@ -33,12 +33,15 @@ class PostHandler(ContentfulNodeHandler):
         def f(value: Any) -> dict:
             return {locale: value}
 
+        unique_key = post.unique_key or f"{post.slug}-{country_code}"
+
         fields: dict[str, Any] = {
             "slug": f(post.slug),
             "title": f(post.title),
             "countryCode": f(country_code),
             "date": f(post.date.strftime("%Y-%m-%d")),
             "content": f(body_to_contentful(post.body)),
+            "uniqueKey": f(unique_key),
         }
         if post.introduction:
             fields["introduction"] = f(post.introduction)
@@ -90,6 +93,7 @@ class PostHandler(ContentfulNodeHandler):
             show_publish_date=not (_field(fields, "hidePublishDate", locale) or False),
             show_hero_image=not (_field(fields, "hideHeroImage", locale) or False),
             related_posts=_entry_ids_from_links(_field(fields, "relatedPosts", locale) or []),
+            unique_key=_field(fields, "uniqueKey", locale),
         )
 
     def parse_tag_refs(self, fields: dict, raw_entries: dict[str, dict], locale: str) -> list[TagRef]:
